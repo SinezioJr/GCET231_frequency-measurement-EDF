@@ -1,53 +1,71 @@
 #include <EDF.h>
 
-void executeA()
+#include <7segmentsLED.h>
+#include <microphoneController.h>
+
+#include <fft.h>
+#include <movingAvegange.h>
+
+#define I2S_WS 15
+#define I2S_SD 4
+#define I2S_SCK 2
+#define I2S_PORT I2S_NUM_0
+
+// Define the length and sample rate of the audio buffer
+#define BUFFER_LENGTH 1024
+#define SAMPLE_RATE 16000
+
+arduinoFFT FFT = arduinoFFT();
+
+SevenSegmentDisplay display(0x70);
+microphoneController microphone(I2S_WS, I2S_SD, I2S_SCK, I2S_PORT, BUFFER_LENGTH, SAMPLE_RATE);
+
+// Allocate memory for the audio buffer
+int16_t audio_buffer[BUFFER_LENGTH];
+double fft_output[BUFFER_LENGTH / 2 + 1];
+size_t bytes_read;
+int freq;
+
+void readMicrophone()
 {
-  Serial.println("run A");
-  delay(200);
+  esp_err_t result = microphone.microphone_read(audio_buffer, &bytes_read);
 }
 
-void executeB()
+void calculeFFT()
 {
-  delay(100);
-  Serial.println("run B");
+  fft(audio_buffer, fft_output, &FFT);
+}
+void principal_frequency()
+{
+  freq = get_principal_frequency(fft_output);
+}
+
+void displayResult()
+{
+  display.display(freq);
 }
 
 void setup()
 {
-  delay(2000);
-  addTask(50000, 200, 50, "001", 1, &executeA);
-  addTask(25000, 100, 40, "002", 1, &executeB);
-  Serial.begin(115200);
-  esp_timer_create_args_t timer_config = {
-      .callback = timer_isr,
-      .arg = NULL,
-      .name = "my_timer"};
-  esp_timer_create(&timer_config, &timer_handle);
+  microphone.setupI2S();
+  display.initI2C();
+  addTask(64000, 1000, 64000, 4, &readMicrophone);
+  // FFT
+  addTask(64000, 33000, 65000, 3, &calculeFFT);
+  // MDM
+  addTask(64000, 2000, 98000, 2, &principal_frequency);
+  // DISPLAY
+  addTask(64000, 2000, 100000, 1, &displayResult);
 
-  // Inicia a primeira execução no primeiro deadline
-  index_ = find_min_deadline_index(tasks, num_tasks);
-  task_t minTask = tasks[index_];
-
-  esp_timer_start_once(timer_handle, millis() - tasks[index_].deadline + tasks[index_].duration);
+  start_EDF();
 }
 
 void loop()
 {
-  int i = find_task_by_code(minTaskCode);
-  if (i != -1)
+  if (exec_index != -1)
   {
-    int start = millis();
-    Serial.println(minTaskCode);
-
-    tasks[i].task_function();
-
-    int real_duration = millis() - start;
-
-    tasks[i].deadline += tasks[i].period + 2 * real_duration - tasks[i].duration;
-
-    update_all_deadlines(real_duration);
-
-    strcpy(minTaskCode, "000");
+    execFunctionAndUpdateDeadlines();
+    exec_index = -1;
   };
   // put your main code here, to run repeatedly:
 }

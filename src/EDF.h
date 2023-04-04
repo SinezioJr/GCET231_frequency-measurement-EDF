@@ -9,7 +9,6 @@ typedef struct
     int duration;
     int deadline;
     int priority;
-    char taskcode[3];
     void (*task_function)(void); // ponteiro para a função
 } task_t;
 
@@ -18,13 +17,11 @@ esp_timer_handle_t timer_handle;
 task_t tasks[TASK_NUMBER];
 int num_tasks = 0;
 int index_;
-
-char minTaskCode[4];
+int exec_index = -1;
 
 void addTask(int period,
              int duration,
              int deadline,
-             const char *taskcode,
              int priority, void (*_function)(void))
 {
 
@@ -35,7 +32,6 @@ void addTask(int period,
         .priority = priority,
         .task_function = _function};
 
-    strcpy(task.taskcode, taskcode);
     tasks[num_tasks] = task;
 
     num_tasks++;
@@ -67,29 +63,25 @@ int find_min_deadline_index(task_t arr[], int size)
 void IRAM_ATTR timer_isr(void *arg)
 {
     index_ = find_min_deadline_index(tasks, num_tasks);
-    strcpy(minTaskCode, tasks[index_].taskcode);
-    Serial.print(tasks[index_].taskcode);
-    Serial.print(" - ");
-    Serial.println(tasks[index_].deadline);
+    exec_index = index_;
+
     esp_timer_start_once(timer_handle, tasks[index_].deadline + tasks[index_].duration);
 }
 
 void start_EDF()
 {
-}
 
-int find_task_by_code(char *taskcode)
-{
-    for (int i = 0; i < num_tasks; i++)
-    {
-        if (strcmp(tasks[i].taskcode, taskcode) == 0)
-        {
-            Serial.println(taskcode);
+    esp_timer_create_args_t timer_config = {
+        .callback = timer_isr,
+        .arg = NULL,
+        .name = "my_timer"};
+    esp_timer_create(&timer_config, &timer_handle);
 
-            return i;
-        }
-    }
-    return -1; // Se não encontrar a tarefa com o código, retorna -1
+    // Inicia a primeira execução no primeiro deadline
+    index_ = find_min_deadline_index(tasks, num_tasks);
+    task_t minTask = tasks[index_];
+
+    esp_timer_start_once(timer_handle, tasks[index_].deadline + tasks[index_].duration);
 }
 
 void update_all_deadlines(int duration)
@@ -98,4 +90,16 @@ void update_all_deadlines(int duration)
     {
         tasks[i].deadline -= duration;
     }
+}
+
+void execFunctionAndUpdateDeadlines()
+{
+    uint64_t start = esp_timer_get_time();
+
+    tasks[exec_index].task_function();
+
+    uint64_t real_duration = esp_timer_get_time() - start;
+    tasks[exec_index].deadline = tasks[exec_index].period + 2 * real_duration - tasks[exec_index].duration;
+
+    update_all_deadlines(real_duration);
 }
